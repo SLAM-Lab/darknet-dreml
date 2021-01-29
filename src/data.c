@@ -734,6 +734,17 @@ image get_segmentation_image2(char *path, int w, int h, int classes)
     return mask;
 }
 
+image load_image_gray(char *path, int w, int h){
+    char labelpath[4096];
+    find_replace(labelpath, "_leftImg8bit.png", "_gtFine_labelIds.png", labelpath);
+    find_replace(path, "images", "mask", labelpath);
+    find_replace(labelpath, "JPEGImages", "mask", labelpath);
+    find_replace(labelpath, ".jpg", ".txt", labelpath);
+    find_replace(labelpath, ".JPG", ".txt", labelpath);
+    find_replace(labelpath, "_leftImg8bit.png", "_gtFine_labelIds.png", labelpath);
+    return load_image(labelpath, w, h, 1);
+}
+
 data load_data_seg(int n, char **paths, int m, int w, int h, int classes, int min, int max, float angle, float aspect, float hue, float saturation, float exposure, int div)
 {
     char **random_paths = get_random_paths(paths, n, m);
@@ -760,9 +771,10 @@ data load_data_seg(int n, char **paths, int m, int w, int h, int classes, int mi
         random_distort_image(sized, hue, saturation, exposure);
         d.X.vals[i] = sized.data;
 
-        image mask = get_segmentation_image(random_paths[i], orig.w, orig.h, classes);
+	//image mask = get_segmentation_image(random_paths[i], orig.w, orig.h, classes);
         //image mask = make_image(orig.w, orig.h, classes+1);
-        image sized_m = rotate_crop_image(mask, a.rad, a.scale/div, a.w/div, a.h/div, a.dx/div, a.dy/div, a.aspect);
+        image mask = load_image_gray(random_paths[i], orig.w, orig.h);
+        image sized_m = rotate_crop_image_seg(mask, a.rad, a.scale/div, a.w/div, a.h/div, a.dx/div, a.dy/div, a.aspect);
 
         if(flip) flip_image(sized_m);
         d.y.vals[i] = sized_m.data;

@@ -32,6 +32,103 @@
 #include "parser.h"
 #include "data.h"
 
+#include <stdio.h>
+#include <string.h>
+#include <assert.h>
+#include "zlib.h"
+
+#define CHUNK	(128*1024)
+//#define CHUNK 16384
+//#define dump
+
+int zlibCompress(char* source, char* dest, int level, size_t source_size, size_t* dest_size)
+{
+    int	dest_index = 0;
+    int source_index = 0;
+
+    int ret, flush;
+    unsigned have;
+    z_stream strm;
+    unsigned char in[CHUNK];
+    unsigned char out[CHUNK];
+
+    /* allocate deflate state */
+    strm.zalloc = Z_NULL;
+    strm.zfree = Z_NULL;
+    strm.opaque = Z_NULL;
+    ret = deflateInit(&strm, level);
+    if (ret != Z_OK)
+        return ret;
+
+    /* compress until end of file */
+    do {
+	/*
+        strm.avail_in = fread(in, 1, CHUNK, source);
+        if (ferror(source)) {
+            (void)deflateEnd(&strm);
+            return Z_ERRNO;
+        }
+        flush = feof(source) ? Z_FINISH : Z_NO_FLUSH;
+	*/
+
+	if(source_index + CHUNK <= source_size)
+	{
+		flush = Z_NO_FLUSH;
+		strm.avail_in = CHUNK;
+		memcpy((void*)in, (const void*)source+source_index, strm.avail_in*sizeof(char));
+		source_index += CHUNK;
+	}
+	else
+	{
+		flush = Z_FINISH;
+		strm.avail_in = (source_size-source_index);
+		memcpy((void*)in, (const void*)source+source_index, strm.avail_in*sizeof(char));
+		source_index = source_size;
+	}
+
+	if(source_index>source_size)
+	{
+		(void)deflateEnd(&strm);
+		return Z_ERRNO;		
+	}
+
+        strm.next_in = in;
+
+        /* run deflate() on input until output buffer not full, finish
+           compression if all of source has been read in */
+        do {
+            strm.avail_out = CHUNK;
+            strm.next_out = out;
+            ret = deflate(&strm, flush);    /* no bad return value */
+            assert(ret != Z_STREAM_ERROR);  /* state not clobbered */
+            have = CHUNK - strm.avail_out;
+	    /*
+            if (fwrite(out, 1, have, dest) != have || ferror(dest)) {
+                (void)deflateEnd(&strm);
+                return Z_ERRNO;
+            }
+	    */
+	    memcpy((void*)dest, (const void*)dest+dest_index, have*sizeof(char));
+            dest_index += have;
+            if(dest_index>*dest_size)
+            {
+                (void)deflateEnd(&strm);
+                return Z_ERRNO;  
+            }
+        } while (strm.avail_out == 0);
+        assert(strm.avail_in == 0);     /* all input will be used */
+
+        /* done when last data in file processed */
+    } while (flush != Z_FINISH);
+    assert(ret == Z_STREAM_END);        /* stream will be complete */
+
+    *dest_size = dest_index;
+
+    /* clean up and return */
+    (void)deflateEnd(&strm);
+    return Z_OK;
+}
+
 load_args get_base_args(network *net)
 {
     load_args args = {0};
@@ -185,8 +282,23 @@ network *make_network(int n)
     return net;
 }
 
+void dumpData(int i, float* data, int size)
+{
+    char fn[100];
+    sprintf(fn, "codes/l%i.data", i);
+    FILE* fh = fopen(fn,"w");
+
+    for(int k=0; k<size; k++)
+	fprintf(fh,"%f\n",data[k]);
+
+    fclose(fh);
+}
+
 void forward_network(network *netp)
 {
+    const size_t max_dest_size = 608 * 608 * 32 * sizeof(float);
+    char* dest = malloc(max_dest_size);
+
 #ifdef GPU
     if(netp->gpu_index >= 0){
         forward_network_gpu(netp);   
@@ -198,16 +310,36 @@ void forward_network(network *netp)
     for(i = 0; i < net.n; ++i){
         net.index = i;
         layer l = net.layers[i];
+
         if(l.delta){
             fill_cpu(l.outputs * l.batch, 0, l.delta, 1);
         }
         l.forward(l, net);
+
+	#ifdef	dump
+	dumpData(i,l.output,l.outputs);
+	#endif
+
+	#ifdef compress
+	size_t dest_size = max_dest_size;
+
+	if(zlibCompress((char*)l.output, dest, Z_DEFAULT_COMPRESSION, l.outputs*sizeof(float), &dest_size) != Z_OK)
+	{
+	    printf("compression failed!\n");
+	    exit(1);
+	}
+      
+        printf("compression ratio: %f\n", ((float)dest_size)/(l.outputs*sizeof(float)));
+	#endif
+
         net.input = l.output;
         if(l.truth) {
             net.truth = l.output;
         }
     }
     calc_network_cost(netp);
+
+    free(dest);
 }
 
 void update_network(network *netp)
@@ -412,9 +544,9 @@ int resize_network(network *net, int w, int h)
     net->truths = out.outputs;
     if(net->layers[net->n-1].truths) net->truths = net->layers[net->n-1].truths;
     net->output = out.output;
-    free(net->input);
+    //free(net->input);
     free(net->truth);
-    net->input = calloc(net->inputs*net->batch, sizeof(float));
+    //net->input = calloc(net->inputs*net->batch, sizeof(float));
     net->truth = calloc(net->truths*net->batch, sizeof(float));
 #ifdef GPU
     if(gpu_index >= 0){
@@ -454,7 +586,7 @@ image get_network_image_layer(network *net, int i)
 {
     layer l = net->layers[i];
 #ifdef GPU
-    //cuda_pull_array(l.output_gpu, l.output, l.outputs);
+    cuda_pull_array(l.output_gpu, l.output, l.outputs);
 #endif
     if (l.out_w && l.out_h && l.out_c){
         return float_to_image(l.out_w, l.out_h, l.out_c, l.output);
@@ -702,6 +834,7 @@ layer get_network_output_layer(network *net)
     for(i = net->n - 1; i >= 0; --i){
         if(net->layers[i].type != COST) break;
     }
+	//printf("layer %i is the output\n",i);
     return net->layers[i];
 }
 

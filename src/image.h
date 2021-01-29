@@ -18,6 +18,12 @@ void *open_video_stream(const char *f, int c, int w, int h, int fps);
 image get_image_from_stream(void *p);
 image load_image_cv(char *filename, int channels);
 int show_image_cv(image im, const char* name, int ms);
+
+int fill_image_from_stream(CvCapture *cap, image im);
+image ipl_to_image(IplImage* src);
+void ipl_into_image(IplImage* src, image im);
+void flush_stream_buffer(CvCapture *cap, int n);
+void show_image_cv(image p, const char *name, IplImage *disp);
 #endif
 
 float get_color(int c, int x, int max);
@@ -27,6 +33,7 @@ void write_label(image a, int r, int c, image *characters, char *string, float *
 image image_distance(image a, image b);
 void scale_image(image m, float s);
 image rotate_crop_image(image im, float rad, float s, int w, int h, float dx, float dy, float aspect);
+image rotate_crop_image_seg(image im, float rad, float s, int w, int h, float dx, float dy, float aspect);
 image random_crop_image(image im, int w, int h);
 image random_augment_image(image im, float angle, float aspect, int low, int high, int w, int h);
 augment_args random_augment_args(image im, float angle, float aspect, int low, int high, int w, int h);
@@ -60,6 +67,8 @@ image make_empty_image(int w, int h, int c);
 void copy_image_into(image src, image dest);
 
 image get_image_layer(image m, int l);
+
+void    save_img_seg(image mask, const char* fn); // Added by Kamyar to enable emuDREML's use
 
 #ifdef __cplusplus
 }

@@ -8,12 +8,15 @@
 #include <stdio.h>
 #include <assert.h>
 
-softmax_layer make_softmax_layer(int batch, int inputs, int groups)
+softmax_layer make_softmax_layer(int batch, int inputs, int groups, int w, int h, int c)
 {
     assert(inputs%groups == 0);
     fprintf(stderr, "softmax                                        %4d\n",  inputs);
     softmax_layer l = {0};
     l.type = SOFTMAX;
+    l.w = w;
+    l.h = h;
+    l.c = c;
     l.batch = batch;
     l.groups = groups;
     l.inputs = inputs;
@@ -50,10 +53,37 @@ void forward_softmax_layer(const softmax_layer l, network net)
         softmax_cpu(net.input, l.inputs/l.groups, l.batch, l.inputs, l.groups, l.inputs/l.groups, 1, l.temperature, l.output);
     }
 
+    #ifdef  CUSTOM_BACKPROP
+    for(int j=0; j<l.h; j++)
+	for(int i=0; i<l.w; i++)
+	{
+		int max_idx = -1;
+		float max_val = 0;
+
+		for(int k=0; k<l.c; k++)
+		{
+			int index = (k*l.h*l.w)+(j*l.w)+i;
+
+			if(l.output[index] > max_val)
+			{
+				max_idx = k;
+				max_val = l.output[index];
+			}
+		}
+
+		for(int k=0; k<l.c; k++)
+		{
+			int index = (k*l.h*l.w)+(j*l.w)+i;
+
+			l.delta[index] = (k==max_idx)?1:0;
+		}
+	}
+    #else
     if(net.truth && !l.noloss){
         softmax_x_ent_cpu(l.batch*l.inputs, l.output, net.truth, l.delta, l.loss);
         l.cost[0] = sum_array(l.loss, l.batch*l.inputs);
     }
+    #endif
 }
 
 void backward_softmax_layer(const softmax_layer l, network net)
@@ -68,6 +98,7 @@ void pull_softmax_layer_output(const softmax_layer layer)
     cuda_pull_array(layer.output_gpu, layer.output, layer.inputs*layer.batch);
 }
 
+#ifdef ORIGINAL_SOFTMAX_GPU
 void forward_softmax_layer_gpu(const softmax_layer l, network net)
 {
     if(l.softmax_tree){
@@ -98,6 +129,48 @@ void forward_softmax_layer_gpu(const softmax_layer l, network net)
         l.cost[0] = sum_array(l.loss, l.batch*l.inputs);
     }
 }
+#else
+void forward_softmax_layer_gpu(const softmax_layer l, network net)
+{
+    softmax_instance_folder_gpu(net.input_gpu, l.inputs/l.groups, l.batch, l.inputs, l.c, l.h, l.w, l.temperature, l.output_gpu);
+    // softmax_instance_gpu(net.input_gpu, l.inputs/l.groups, l.batch, l.inputs, l.c, l.h, l.w, l.temperature, l.output_gpu);
+    // resize the truth from l.w*l.h*1 to l.w*l.h*l.c
+    float *truth_temp = calloc(l.c*l.w*l.h, sizeof(float));
+    float *truth_temp_gpu = cuda_make_array(truth_temp, l.c*l.w*l.h); 
+    int i, j;
+    if(net.truth && !l.noloss){
+        cuda_pull_array(net.truth_gpu, net.truth, l.batch*l.w*l.h);
+        // init truth_temp to 0
+        // for (i = 0; i < l.c; ++i){
+        //     for (j = 0; j < l.h; ++j){
+        //         for (int k = 0; k < l.w; ++k){
+        //             int index = i*l.h*l.w+j*l.w+k;
+        //             truth_temp[index] = 0;
+        //         }
+        //     }
+        // }
+        // set ont-hot map 
+        for (i = 0; i < l.h; ++i){
+            for (j = 0; j < l.w; ++j){
+                int class_id = net.truth[i*l.w+j];
+                // printf("truth value is %d\n", class_id);
+                int value_index = class_id*l.h*l.w+i*l.w+j;
+                truth_temp[value_index] = 1;
+            }
+        }
+        
+        cuda_push_array(truth_temp_gpu, truth_temp, l.batch*l.w*l.h*l.c);
+    }
+    // calculate delta and loss
+    if(net.truth && !l.noloss){
+        softmax_x_ent_gpu(l.batch*l.inputs, l.output_gpu, truth_temp_gpu, l.delta_gpu, l.loss_gpu);
+        cuda_pull_array(l.loss_gpu, l.loss, l.batch*l.inputs);
+        l.cost[0] = sum_array(l.loss, l.batch*l.inputs);
+    }
+    free(truth_temp);
+    cuda_free(truth_temp_gpu);
+}
+#endif
 
 void backward_softmax_layer_gpu(const softmax_layer layer, network net)
 {

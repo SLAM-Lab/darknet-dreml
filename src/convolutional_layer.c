@@ -470,6 +470,7 @@ void forward_convolutional_layer(convolutional_layer l, network net)
             } else {
                 im2col_cpu(im, l.c/l.groups, l.h, l.w, l.size, l.stride, l.pad, b);
             }
+
             gemm(0,0,m,n,k,1,a,k,b,n,1,c,n);
         }
     }
@@ -493,9 +494,14 @@ void backward_convolutional_layer(convolutional_layer l, network net)
 
     gradient_array(l.output, l.outputs*l.batch, l.activation, l.delta);
 
-    if(l.batch_normalize){
+    //#ifndef CUSTOM_BACKPROP
+    if(l.batch_normalize)
+    {
         backward_batchnorm_layer(l, net);
-    } else {
+    }
+    else
+    //#endif
+    {
         backward_bias(l.bias_updates, l.delta, l.batch, l.n, k);
     }
 
@@ -505,9 +511,14 @@ void backward_convolutional_layer(convolutional_layer l, network net)
             float *b = net.workspace;
             float *c = l.weight_updates + j*l.nweights/l.groups;
 
+            #ifndef DYNAMIC_FMAP_PRUNING
             float *im  = net.input + (i*l.groups + j)*l.c/l.groups*l.h*l.w;
+            #endif
+
             float *imd = net.delta + (i*l.groups + j)*l.c/l.groups*l.h*l.w;
 
+            #ifndef DYNAMIC_FMAP_PRUNING
+            printf("calculating weight updates...\n");
             if(l.size == 1){
                 b = im;
             } else {
@@ -516,6 +527,7 @@ void backward_convolutional_layer(convolutional_layer l, network net)
             }
 
             gemm(0,1,m,n,k,1,a,k,b,k,1,c,n);
+            #endif
 
             if (net.delta) {
                 a = l.weights + j*l.nweights/l.groups;

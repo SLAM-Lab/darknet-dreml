@@ -79,6 +79,7 @@ void forward_route_layer(const route_layer l, network net)
         int index = l.input_layers[i];
         float *input = net.layers[index].output;
         int input_size = l.input_sizes[i];
+	//printf("%i/%i\n",index,input_size);
         for(j = 0; j < l.batch; ++j){
             copy_cpu(input_size, input + j*input_size, 1, l.output + offset + j*l.outputs, 1);
         }
