@@ -151,7 +151,7 @@ void *fetch_in_thread(void *ptr)
     */
 
     int status = fill_image_from_stream(cap, buff[buff_index]);
-    letterbox_image_into(buff[buff_index], net->w, net->h, buff_letter[buf|      letterbox_image_into(buff[buff_index], net->w, net->h, buff_letter[buf
+    letterbox_image_into(buff[buff_index], net->w, net->h, buff_letter[buff_index]);
     if(status == 0) demo_done = 1; 
 
     return 0;
